@@ -1,22 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependencies import get_current_user
 from app.auth.security import create_access_token, verify_password
 from app.crud.user import create_user, get_user_by_username
 from app.database import get_db
+from app.models.user import User
 from app.schemas.user import Token, UserCreate, UserLogin, UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-async def authenticate_user(username: str, password: str, db: AsyncSession) -> Token:
-    user = await get_user_by_username(db, username)
-    if user is None or not verify_password(password, user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
-
-    token = create_access_token(user.id)
-    return Token(access_token=token)
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
@@ -31,9 +23,15 @@ async def register(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 async def login(credentials: UserLogin, db: AsyncSession = Depends(get_db)):
-    return await authenticate_user(credentials.username, credentials.password, db)
+    user = await get_user_by_username(db, credentials.username)
+    if user is None or not verify_password(credentials.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
+
+    token = create_access_token(user.id)
+    return Token(access_token=token)
 
 
-@router.post("/token", response_model=Token)
-async def token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
-    return await authenticate_user(form_data.username, form_data.password, db)
+@router.get("/me", response_model=UserOut)
+async def get_me(current_user: User = Depends(get_current_user)):
+    """Lets the frontend resolve who the current token belongs to on page load."""
+    return current_user

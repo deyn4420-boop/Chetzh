@@ -28,3 +28,11 @@ async def create_user(db: AsyncSession, user_in: UserCreate) -> User:
     await db.commit()
     await db.refresh(user)
     return user
+
+
+async def search_users_by_username(db: AsyncSession, query: str, limit: int = 10) -> list[User]:
+    """Prefix/substring search used by the frontend's 'start a new chat' flow."""
+    result = await db.execute(
+        select(User).where(User.username.ilike(f"%{query}%")).limit(limit)
+    )
+    return list(result.scalars().all())
