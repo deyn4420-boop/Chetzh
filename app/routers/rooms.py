@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
-from app.crud.room import create_room, get_user_rooms, is_room_member
+from app.crud.room import create_room, get_room_by_id, get_user_rooms, is_room_member
 from app.crud.message import get_room_messages
 from app.database import get_db
 from app.models.user import User
@@ -30,6 +30,21 @@ async def list_my_rooms(
     db: AsyncSession = Depends(get_db),
 ):
     return await get_user_rooms(db, current_user.id)
+
+
+@router.get("/{room_id}", response_model=RoomOut)
+async def get_room(
+    room_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not await is_room_member(db, room_id, current_user.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a member of this room")
+
+    room = await get_room_by_id(db, room_id)
+    if room is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
+    return room
 
 
 @router.get("/{room_id}/messages", response_model=list[MessageOut])

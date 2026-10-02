@@ -12,6 +12,7 @@ from app.schemas.message import WSError, WSIncomingChat, WSIncomingTyping, WSOut
 from app.services.connection_manager import manager
 from app.services.message_service import send_chat_message
 from app.services.pubsub import mark_offline, mark_online, publish_to_room
+from app.services.rate_limiter import check_rate_limit
 
 router = APIRouter()
 
@@ -66,6 +67,17 @@ async def _handle_incoming(raw: str, *, room_id: uuid.UUID, user: User, db: Asyn
         data = json.loads(raw)
     except json.JSONDecodeError:
         await websocket.send_text(WSError(detail="Malformed JSON").model_dump_json())
+        return
+
+    # Checked before dispatching on type - both "chat" and "typing" trigger a
+    # Redis publish, so the cap needs to apply to the whole incoming stream,
+    # not just chat messages. Backed by Redis (not an in-memory counter) so
+    # the limit holds even if this user's connection lands on a different
+    # instance next time they reconnect.
+    if not await check_rate_limit(user.id):
+        await websocket.send_text(
+            WSError(detail="Rate limit exceeded - slow down").model_dump_json()
+        )
         return
 
     msg_type = data.get("type")

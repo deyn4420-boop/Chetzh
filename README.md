@@ -68,9 +68,18 @@ leaves, and `{"type": "error", "detail": "..."}` on malformed input.
 3. Send a message from one tab - it should appear in the other, proving the
    message crossed process boundaries via Redis, not just an in-memory map.
 
+## Rate limiting
+
+Every incoming WebSocket frame (`chat` and `typing` alike) is checked against
+a Redis-backed fixed-window limit (`services/rate_limiter.py`) before being
+processed - `ws_message_rate_limit` messages per `ws_rate_limit_window_seconds`,
+both configurable in `.env`. It's backed by Redis rather than an in-memory
+counter specifically because a user's connection can land on either `app1` or
+`app2` depending on which one nginx routes them to - an in-memory limit on one
+process wouldn't see traffic the user sent while connected to the other.
+
 ## Next steps / things intentionally left out for now
 
-- Rate limiting per connection (config values are already in `config.py`,
-  just not enforced yet)
 - Read receipts (message `status` field exists, no endpoint updates it yet)
 - Refresh tokens (access token just expires and requires re-login)
+- CI pipeline, live deployment, full-text search

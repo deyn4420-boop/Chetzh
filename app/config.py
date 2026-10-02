@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     ws_message_rate_limit: int = 10  # max messages per rate_limit_window per connection
     ws_rate_limit_window_seconds: int = 5
 
+    # CORS - the Next.js dev server runs on a different origin, so it needs
+    # to be explicitly allowed to call this API from the browser.
+    cors_allowed_origins: list[str] = ["http://localhost:3000"]
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 
