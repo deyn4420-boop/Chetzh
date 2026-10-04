@@ -18,11 +18,6 @@ export function useChatSocket(roomId: string, token: string | null) {
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isUnmounted = useRef(false);
 
-  // connect() calls itself recursively on reconnect. It's defined via
-  // useCallback below, so referencing `connect` directly from inside its
-  // own closure would read a stale/undeclared binding. Routing the
-  // recursive call through this ref sidesteps that - connectRef.current
-  // always points at the latest version once assigned just below.
   const connectRef = useRef<() => void>(() => {});
 
   const connect = useCallback(() => {
@@ -33,17 +28,17 @@ export function useChatSocket(roomId: string, token: string | null) {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (wsRef.current !== ws) return;
       reconnectAttempt.current = 0;
       setStatus("open");
     };
 
     ws.onmessage = (event: MessageEvent<string>) => {
+      if (wsRef.current !== ws) return;
       const data: WSOutgoing = JSON.parse(event.data);
 
       switch (data.type) {
         case "chat":
-          // Dedup in case of reconnect overlap - a message that already
-          // exists by id is ignored rather than appended twice.
           setMessages((prev) =>
             prev.some((m) => m.id === data.message.id) ? prev : [...prev, data.message]
           );
@@ -74,12 +69,12 @@ export function useChatSocket(roomId: string, token: string | null) {
     };
 
     ws.onclose = () => {
+      if (wsRef.current !== ws) return;
+
       setStatus("closed");
       wsRef.current = null;
       if (isUnmounted.current) return;
 
-      // Exponential backoff, capped - avoids hammering the server if it's
-      // down, while still recovering quickly from a single dropped frame.
       const delay = Math.min(
         RECONNECT_BASE_DELAY_MS * 2 ** reconnectAttempt.current,
         RECONNECT_MAX_DELAY_MS
@@ -89,14 +84,11 @@ export function useChatSocket(roomId: string, token: string | null) {
     };
 
     ws.onerror = () => {
+      if (wsRef.current !== ws) return;
       setStatus("error");
     };
   }, [roomId, token]);
 
-  // Keep the ref pointed at the latest connect closure (fresh roomId/token)
-  // so the recursive reconnect call above never invokes a stale version.
-  // This has to run in an effect, not during render - refs are an escape
-  // hatch from React's render cycle, not something render should write to.
   useEffect(() => {
     connectRef.current = connect;
   }, [connect]);
@@ -104,10 +96,6 @@ export function useChatSocket(roomId: string, token: string | null) {
   useEffect(() => {
     isUnmounted.current = false;
 
-    // Reset message state for the new room, then open the socket - both
-    // happen inside this callback rather than as bare statements in the
-    // effect body, which keeps the two state updates batched together
-    // instead of causing two separate render passes.
     const start = () => {
       setMessages([]);
       connect();
@@ -138,7 +126,11 @@ export function useChatSocket(roomId: string, token: string | null) {
   );
 
   const prependHistory = useCallback((older: Message[]) => {
-    setMessages((prev) => [...older, ...prev]);
+    setMessages((prev) => {
+      const existingIds = new Set(prev.map((m) => m.id));
+      const deduped = older.filter((m) => !existingIds.has(m.id));
+      return [...deduped, ...prev];
+    });
   }, []);
 
   return { messages, typingUserIds, onlineUserIds, status, sendMessage, setTyping, prependHistory };
