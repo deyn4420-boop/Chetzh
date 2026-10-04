@@ -11,7 +11,7 @@ from app.models.user import User
 from app.schemas.message import WSError, WSIncomingChat, WSIncomingTyping, WSOutgoingPresence, WSOutgoingTyping
 from app.services.connection_manager import manager
 from app.services.message_service import send_chat_message
-from app.services.pubsub import mark_offline, mark_online, publish_to_room
+from app.services.pubsub import get_online_user_ids, mark_offline, mark_online, publish_to_room
 from app.services.rate_limiter import check_rate_limit
 
 router = APIRouter()
@@ -24,14 +24,24 @@ async def chat_websocket(
     current_user: User = Depends(get_current_user_ws),
     db: AsyncSession = Depends(get_db),
 ):
-    # Auth already happened in the dependency. Now check room membership
-    # before accepting the connection - a valid user shouldn't be able to
-    # listen in on a room they don't belong to.
     if not await is_room_member(db, room_id, current_user.id):
         await websocket.close(code=4403, reason="Not a member of this room")
         return
 
     await manager.connect(room_id, current_user.id, websocket)
+
+    # Presence is broadcast only on change (connect/disconnect), so a client
+    # that joins after someone else is already connected would otherwise
+    # never learn that peer is online - nothing re-announces existing state.
+    # This sends a one-time snapshot of who's already online, directly to
+    # just this newly-connected client, before marking this user online
+    # and broadcasting that to everyone else.
+    already_online = await get_online_user_ids(room_id)
+    for uid in already_online:
+        await websocket.send_text(
+            WSOutgoingPresence(user_id=uuid.UUID(uid), status="online").model_dump_json()
+        )
+
     await mark_online(room_id, current_user.id)
     await publish_to_room(
         room_id,
