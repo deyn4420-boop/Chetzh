@@ -30,7 +30,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
 
   return (
     <ChatWindow
-      roomName={room?.name ?? "Chat"}
+           roomName={room?.display_name ?? "Chat"}
       messages={messages}
       currentUserId={user.id}
       typingCount={[...typingUserIds].filter((id) => id !== user.id).length}

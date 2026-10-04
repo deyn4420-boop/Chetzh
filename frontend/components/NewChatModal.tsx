@@ -41,7 +41,7 @@ export function NewChatModal({
       // Setting the room's name to the other user's username at creation
       // time means the room list can display something meaningful without
       // needing a separate "who's in this room" lookup.
-      const room = await api.createRoom(token, user.username, false, [user.id]);
+            const room = await api.createRoom(token, null, false, [user.id]);
       onCreated(room.id);
     } finally {
       setIsCreating(false);

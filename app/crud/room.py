@@ -4,13 +4,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.room import Room, RoomMember
+from app.models.user import User
 from app.schemas.room import RoomCreate
 
 
 async def create_room(db: AsyncSession, creator_id: uuid.UUID, room_in: RoomCreate) -> Room:
     room = Room(name=room_in.name, is_group=room_in.is_group)
     db.add(room)
-    await db.flush()  # assign room.id before creating members
+    await db.flush()
 
     member_ids = set(room_in.member_ids) | {creator_id}
     for uid in member_ids:
@@ -38,3 +39,21 @@ async def is_room_member(db: AsyncSession, room_id: uuid.UUID, user_id: uuid.UUI
         select(RoomMember).where(RoomMember.room_id == room_id, RoomMember.user_id == user_id)
     )
     return result.scalar_one_or_none() is not None
+
+
+async def get_other_member_username(db: AsyncSession, room_id: uuid.UUID, exclude_user_id: uuid.UUID) -> str | None:
+    """
+    For a 1:1 room, returns the username of whichever member ISN'T
+    exclude_user_id - i.e. "who is the current viewer talking to". This is
+    what makes the room's displayed name correct for both sides: Alice sees
+    "bob" and Bob sees "alice", computed from the same underlying room
+    rather than a single shared name field that can only be correct for
+    one of them.
+    """
+    result = await db.execute(
+        select(User.username)
+        .join(RoomMember, RoomMember.user_id == User.id)
+        .where(RoomMember.room_id == room_id, RoomMember.user_id != exclude_user_id)
+        .limit(1)
+    )
+    return result.scalar_one_or_none()

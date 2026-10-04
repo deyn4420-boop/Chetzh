@@ -14,6 +14,7 @@ export interface Room {
   name: string | null;
   is_group: boolean;
   created_at: string;
+  display_name: string;
 }
 
 export interface Message {

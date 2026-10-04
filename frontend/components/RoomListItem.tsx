@@ -9,7 +9,7 @@ export function RoomListItem({ room, isActive }: { room: Room; isActive: boolean
         isActive ? "bg-blue-50 text-blue-700" : "text-gray-700 hover:bg-gray-50"
       }`}
     >
-      <div className="font-medium">{room.name ?? "Untitled chat"}</div>
+           <div className="font-medium">{room.display_name}</div>
       {room.is_group && <div className="text-xs text-gray-400">Group chat</div>}
     </Link>
   );

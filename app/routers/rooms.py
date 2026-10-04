@@ -4,14 +4,31 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
-from app.crud.room import create_room, get_room_by_id, get_user_rooms, is_room_member
+from app.crud.room import create_room, get_other_member_username, get_room_by_id, get_user_rooms, is_room_member
 from app.crud.message import get_room_messages
 from app.database import get_db
+from app.models.room import Room
 from app.models.user import User
 from app.schemas.message import MessageOut
 from app.schemas.room import RoomCreate, RoomOut
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
+
+
+async def _to_room_out(db: AsyncSession, room: Room, current_user_id: uuid.UUID) -> RoomOut:
+    if room.is_group:
+        display_name = room.name or "Group chat"
+    else:
+        other_username = await get_other_member_username(db, room.id, current_user_id)
+        display_name = other_username or (room.name or "Chat")
+
+    return RoomOut(
+        id=room.id,
+        name=room.name,
+        is_group=room.is_group,
+        created_at=room.created_at,
+        display_name=display_name,
+    )
 
 
 @router.post("", response_model=RoomOut, status_code=status.HTTP_201_CREATED)
@@ -21,7 +38,7 @@ async def create_room_endpoint(
     db: AsyncSession = Depends(get_db),
 ):
     room = await create_room(db, creator_id=current_user.id, room_in=room_in)
-    return room
+    return await _to_room_out(db, room, current_user.id)
 
 
 @router.get("", response_model=list[RoomOut])
@@ -29,7 +46,8 @@ async def list_my_rooms(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_user_rooms(db, current_user.id)
+    rooms = await get_user_rooms(db, current_user.id)
+    return [await _to_room_out(db, r, current_user.id) for r in rooms]
 
 
 @router.get("/{room_id}", response_model=RoomOut)
@@ -44,7 +62,7 @@ async def get_room(
     room = await get_room_by_id(db, room_id)
     if room is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Room not found")
-    return room
+    return await _to_room_out(db, room, current_user.id)
 
 
 @router.get("/{room_id}/messages", response_model=list[MessageOut])
