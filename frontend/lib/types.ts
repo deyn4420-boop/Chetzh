@@ -1,7 +1,3 @@
-// Mirrors app/schemas/*.py on the backend. Kept hand-written and in sync
-// manually for a project this size - see README for the tradeoff note on
-// generating these from the OpenAPI schema instead, once the API stabilizes.
-
 export interface User {
   id: string;
   username: string;
@@ -31,21 +27,14 @@ export interface Token {
   token_type: string;
 }
 
-// A room enriched client-side for display purposes - the backend's RoomOut
-// doesn't include member info, so the room list page fills this in itself
-// (see app/chat/page.tsx) rather than requiring a backend change.
-export interface RoomWithDisplayName extends Room {
-  displayName: string;
-}
-
-// --- WebSocket wire formats - mirrors app/schemas/message.py exactly ---
-
 export type WSIncoming =
   | { type: "chat"; content: string }
-  | { type: "typing"; is_typing: boolean };
+  | { type: "typing"; is_typing: boolean }
+  | { type: "ack"; message_id: string; status: "delivered" | "read" };
 
 export type WSOutgoing =
   | { type: "chat"; message: Message }
   | { type: "typing"; user_id: string; is_typing: boolean }
   | { type: "presence"; user_id: string; status: "online" | "offline" }
+  | { type: "status_update"; message_id: string; status: "delivered" | "read" }
   | { type: "error"; detail: string };

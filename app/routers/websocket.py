@@ -5,10 +5,19 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user_ws
+from app.crud.message import update_message_status
 from app.crud.room import is_room_member
 from app.database import get_db
 from app.models.user import User
-from app.schemas.message import WSError, WSIncomingChat, WSIncomingTyping, WSOutgoingPresence, WSOutgoingTyping
+from app.schemas.message import (
+    WSError,
+    WSIncomingAck,
+    WSIncomingChat,
+    WSIncomingTyping,
+    WSOutgoingPresence,
+    WSOutgoingStatusUpdate,
+    WSOutgoingTyping,
+)
 from app.services.connection_manager import manager
 from app.services.message_service import send_chat_message
 from app.services.pubsub import get_online_user_ids, mark_offline, mark_online, publish_to_room
@@ -30,12 +39,6 @@ async def chat_websocket(
 
     await manager.connect(room_id, current_user.id, websocket)
 
-    # Presence is broadcast only on change (connect/disconnect), so a client
-    # that joins after someone else is already connected would otherwise
-    # never learn that peer is online - nothing re-announces existing state.
-    # This sends a one-time snapshot of who's already online, directly to
-    # just this newly-connected client, before marking this user online
-    # and broadcasting that to everyone else.
     already_online = await get_online_user_ids(room_id)
     for uid in already_online:
         await websocket.send_text(
@@ -79,11 +82,6 @@ async def _handle_incoming(raw: str, *, room_id: uuid.UUID, user: User, db: Asyn
         await websocket.send_text(WSError(detail="Malformed JSON").model_dump_json())
         return
 
-    # Checked before dispatching on type - both "chat" and "typing" trigger a
-    # Redis publish, so the cap needs to apply to the whole incoming stream,
-    # not just chat messages. Backed by Redis (not an in-memory counter) so
-    # the limit holds even if this user's connection lands on a different
-    # instance next time they reconnect.
     if not await check_rate_limit(user.id):
         await websocket.send_text(
             WSError(detail="Rate limit exceeded - slow down").model_dump_json()
@@ -98,9 +96,6 @@ async def _handle_incoming(raw: str, *, room_id: uuid.UUID, user: User, db: Asyn
         except ValidationError:
             await websocket.send_text(WSError(detail="Invalid chat payload").model_dump_json())
             return
-        # This persists to Postgres AND publishes to Redis, which fans out to
-        # every instance holding sockets for this room (including this one) -
-        # so we don't separately push it locally here.
         await send_chat_message(db, room_id=room_id, sender_id=user.id, content=incoming.content)
 
     elif msg_type == "typing":
@@ -111,6 +106,17 @@ async def _handle_incoming(raw: str, *, room_id: uuid.UUID, user: User, db: Asyn
             return
         outgoing = WSOutgoingTyping(user_id=user.id, is_typing=incoming.is_typing)
         await publish_to_room(room_id, outgoing.model_dump_json())
+
+    elif msg_type == "ack":
+        try:
+            incoming = WSIncomingAck.model_validate(data)
+        except ValidationError:
+            await websocket.send_text(WSError(detail="Invalid ack payload").model_dump_json())
+            return
+        updated = await update_message_status(db, incoming.message_id, incoming.status)
+        if updated is not None:
+            outgoing = WSOutgoingStatusUpdate(message_id=updated.id, status=updated.status)
+            await publish_to_room(room_id, outgoing.model_dump_json())
 
     else:
         await websocket.send_text(WSError(detail=f"Unknown message type: {msg_type}").model_dump_json())

@@ -7,7 +7,7 @@ const RECONNECT_MAX_DELAY_MS = 15000;
 
 export type ConnectionStatus = "connecting" | "open" | "closed" | "error";
 
-export function useChatSocket(roomId: string, token: string | null) {
+export function useChatSocket(roomId: string, token: string | null, currentUserId: string | null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [typingUserIds, setTypingUserIds] = useState<Set<string>>(new Set());
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
@@ -19,6 +19,12 @@ export function useChatSocket(roomId: string, token: string | null) {
   const isUnmounted = useRef(false);
 
   const connectRef = useRef<() => void>(() => {});
+
+  const send = useCallback((payload: WSIncoming) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(payload));
+    }
+  }, []);
 
   const connect = useCallback(() => {
     if (!token || isUnmounted.current) return;
@@ -38,11 +44,30 @@ export function useChatSocket(roomId: string, token: string | null) {
       const data: WSOutgoing = JSON.parse(event.data);
 
       switch (data.type) {
-        case "chat":
+        case "chat": {
           setMessages((prev) =>
             prev.some((m) => m.id === data.message.id) ? prev : [...prev, data.message]
           );
+          // This app only ever shows a message while the recipient's chat
+          // window is actively open and connected - there's no separate
+          // "app in background" state to distinguish delivered-but-unread
+          // from read. Receiving a live message from someone else IS both
+          // delivery and reading at once, so both acks fire together here
+          // rather than faking a gap between the two.
+          if (data.message.sender_id !== currentUserId) {
+            send({ type: "ack", message_id: data.message.id, status: "delivered" });
+            send({ type: "ack", message_id: data.message.id, status: "read" });
+          }         
+           if (data.message.sender_id !== currentUserId) {
+            // Sending "read" alone is enough - the backend's status ordering
+            // treats "read" as already superseding "delivered", and sending
+            // both doubled the number of WebSocket frames this client fires
+            // per incoming message, which was enough on its own to trip the
+            // rate limiter during a backlog of unread messages.
+            send({ type: "ack", message_id: data.message.id, status: "read" });
+          }
           break;
+        }
 
         case "typing":
           setTypingUserIds((prev) => {
@@ -60,6 +85,12 @@ export function useChatSocket(roomId: string, token: string | null) {
             else next.delete(data.user_id);
             return next;
           });
+          break;
+
+        case "status_update":
+          setMessages((prev) =>
+            prev.map((m) => (m.id === data.message_id ? { ...m, status: data.status } : m))
+          );
           break;
 
         case "error":
@@ -87,7 +118,7 @@ export function useChatSocket(roomId: string, token: string | null) {
       if (wsRef.current !== ws) return;
       setStatus("error");
     };
-  }, [roomId, token]);
+  }, [roomId, token, currentUserId, send]);
 
   useEffect(() => {
     connectRef.current = connect;
@@ -109,12 +140,6 @@ export function useChatSocket(roomId: string, token: string | null) {
     };
   }, [connect]);
 
-  const send = useCallback((payload: WSIncoming) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(payload));
-    }
-  }, []);
-
   const sendMessage = useCallback(
     (content: string) => send({ type: "chat", content }),
     [send]
@@ -125,13 +150,39 @@ export function useChatSocket(roomId: string, token: string | null) {
     [send]
   );
 
-  const prependHistory = useCallback((older: Message[]) => {
-    setMessages((prev) => {
-      const existingIds = new Set(prev.map((m) => m.id));
-      const deduped = older.filter((m) => !existingIds.has(m.id));
-      return [...deduped, ...prev];
-    });
-  }, []);
+  const markRead = useCallback(
+    (messageId: string) => send({ type: "ack", message_id: messageId, status: "read" }),
+    [send]
+  );
 
-  return { messages, typingUserIds, onlineUserIds, status, sendMessage, setTyping, prependHistory };
+  const prependHistory = useCallback(
+    (older: Message[]) => {
+      setMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => m.id));
+        const deduped = older.filter((m) => !existingIds.has(m.id));
+        return [...deduped, ...prev];
+      });
+
+      // History messages from others that aren't already "read" get marked
+      // read now - loading the history IS opening the room, same reasoning
+      // as the live-message case above.
+      for (const m of older) {
+        if (m.sender_id !== currentUserId && m.status !== "read") {
+          send({ type: "ack", message_id: m.id, status: "read" });
+        }
+      }
+    },
+    [currentUserId, send]
+  );
+
+  return {
+    messages,
+    typingUserIds,
+    onlineUserIds,
+    status,
+    sendMessage,
+    setTyping,
+    markRead,
+    prependHistory,
+  };
 }

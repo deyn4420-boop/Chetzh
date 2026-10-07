@@ -16,46 +16,47 @@ class MessageOut(BaseModel):
     created_at: datetime
 
 
-# --- WebSocket wire formats ---
-# Every payload sent over the socket (either direction) has a "type" discriminator
-# so the client/server can pattern-match on it without guessing the shape.
-
-
 class WSIncomingChat(BaseModel):
-    """Client -> server: a new chat message."""
-
     type: Literal["chat"] = "chat"
     content: str
 
 
 class WSIncomingTyping(BaseModel):
-    """Client -> server: typing indicator toggle."""
-
     type: Literal["typing"] = "typing"
     is_typing: bool
 
 
-class WSOutgoingChat(BaseModel):
-    """Server -> client: a broadcasted chat message."""
+class WSIncomingAck(BaseModel):
+    """Client -> server: acknowledges it received (or is viewing) a message."""
 
+    type: Literal["ack"] = "ack"
+    message_id: uuid.UUID
+    status: Literal["delivered", "read"]
+
+
+class WSOutgoingChat(BaseModel):
     type: Literal["chat"] = "chat"
     message: MessageOut
 
 
 class WSOutgoingTyping(BaseModel):
-    """Server -> client: someone is/isn't typing."""
-
     type: Literal["typing"] = "typing"
     user_id: uuid.UUID
     is_typing: bool
 
 
 class WSOutgoingPresence(BaseModel):
-    """Server -> client: presence change (user joined/left room)."""
-
     type: Literal["presence"] = "presence"
     user_id: uuid.UUID
     status: Literal["online", "offline"]
+
+
+class WSOutgoingStatusUpdate(BaseModel):
+    """Server -> client: a message's delivery/read status changed."""
+
+    type: Literal["status_update"] = "status_update"
+    message_id: uuid.UUID
+    status: Literal["delivered", "read"]
 
 
 class WSError(BaseModel):

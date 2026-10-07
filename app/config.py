@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24  # 1 day
 
     # WebSocket
-    ws_message_rate_limit: int = 10  # max messages per rate_limit_window per connection
+    ws_message_rate_limit: int = 30 # max messages per rate_limit_window per connection
     ws_rate_limit_window_seconds: int = 5
 
     # CORS - the Next.js dev server runs on a different origin, so it needs
