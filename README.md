@@ -1,5 +1,7 @@
 # Realtime Chat Backend
 
+![CI](https://github.com/deyn4420-boop/Chetzh/actions/workflows/ci.yml/badge.svg)
+
 FastAPI + WebSockets + Postgres + Redis. Built to demonstrate horizontal
 scaling of stateful WebSocket connections across multiple server instances.
 
